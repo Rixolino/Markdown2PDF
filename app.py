@@ -38,13 +38,10 @@ def extract_zip(zip_path, extract_to):
 # Funzione per gestire l'errore
 def handle_conversion_error(stderr):
     # Esegui il controllo per i messaggi di errore specifici
-    # Ignora l'errore relativo a `rsvg-convert`
     if re.search(r'rsvg-convert.*does not exist', stderr):
         return True  # Ignora questo errore
-    # Ignora l'errore relativo al pacchetto `keyval`
     if re.search(r'Package keyval Error: bottom:1.5cm undefined', stderr):
         return True  # Ignora questo errore
-    # Se ci sono altri errori, non ignorarli
     return False
 
 @app.route('/', methods=['GET', 'POST'])
@@ -100,7 +97,7 @@ def index():
                     # Costruisce il percorso temporaneo per il file
                     temp_md_file = f"{md_file}_temp.md"
                     
-                                        # Rimuove il contenuto specificato (Open in Codespaces) e le immagini SVG
+                    # Rimuove i contenuti specificati e le immagini SVG
                     with open(md_file, 'r') as f:
                         content = f.read()
 
@@ -115,24 +112,28 @@ def index():
                         f.write(content)
 
                     # Costruisce il comando per LaTeX usando pandoc
-                    # Comando aggiornato per il pdf
                     command = f"""
+                    powershell -Command "
                     $content = Get-Content '{md_file}'
                     $content = $content -replace '\\[!\\[Open in Codespaces\\]\\([\\^\\)]*\\)', ''
                     $content | Set-Content -Path '{temp_md_file}'
-                    pandoc -V geometry:"top=2cm,bottom=1.5cm,left=2cm,right=2cm" -f markdown-implicit_figures --pdf-engine=xelatex -o '{os.path.join(app.config['RESULTS_FOLDER'], f"{counter}.pdf")}' '{temp_md_file}'
+                    pandoc -V geometry:'top=2cm,bottom=1.5cm,left=2cm,right=2cm' -f markdown-implicit_figures --pdf-engine=xelatex -o '{os.path.join(app.config['RESULTS_FOLDER'], f'{counter}.pdf')}' '{temp_md_file}'
                     Remove-Item '{temp_md_file}'
+                    "
                     """
 
-                    
                     # Esegui il comando
                     result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
                     # Verifica l'errore
                     if result.returncode != 0:
                         stderr = result.stderr.decode()
-                        flash(f"Errore durante la conversione: {stderr}", 'error')
-                        return render_template('index.html')
+                        # Ignora gli errori specifici legati a PowerShell
+                        if "not found" in stderr:
+                            pass  # Ignora questi errori
+                        else:
+                            flash(f"Errore durante la conversione: {stderr}", 'error')
+                            return render_template('index.html')
 
                     # Verifica se il PDF è stato creato
                     pdf_path = os.path.join(app.config['RESULTS_FOLDER'], f"{counter}.pdf")
@@ -150,7 +151,8 @@ def index():
                 # Elimina la cartella temporanea
                 shutil.rmtree(temp_dir)
 
-                # Restituisci i file PDF per il download
+                # Mostra i PDF generati per l'anteprima
+                flash(f"{len(output_files)} file PDF generati!", 'success')
                 return render_template('index.html', output_files=output_files)
 
             except Exception as e:
@@ -163,11 +165,20 @@ def index():
 
     return render_template('index.html')
 
+
 # Route per il download dei file generati
 @app.route('/static/results/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['RESULTS_FOLDER'], filename)
 
+# Route per visualizzare l'anteprima PDF
+@app.route('/preview/<filename>')
+def preview_pdf(filename):
+    pdf_path = os.path.join(app.config['RESULTS_FOLDER'], filename)
+    if not os.path.exists(pdf_path):
+        flash("PDF non trovato.", 'error')
+        return render_template('index.html')
+    return render_template('preview.html', pdf_file=filename)
 
 if __name__ == '__main__':
     app.run(debug=True)
